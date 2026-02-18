@@ -1,0 +1,256 @@
+[workspace]
+members = [".", "crates/rock_particles", "crates/rock_materials"]
+resolver = "2"
+
+[package]
+name = "bevy_game"
+description = "Bevy 7th game jam project"
+license = "MIT OR Apache-2.0 OR CC0-1.0"
+authors = ["Rockcen"]
+version = "0.1.0"
+edition = "2024"
+exclude = ["assets"]
+readme = "readme.md"
+keywords = ["bevy", "2d", "game"]
+categories = ["game-development"]
+
+# ─── Engine ───────────────────────────────────────────────────────────────────
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = [
+    "2d_bevy_render",
+    "default_app",
+    "default_platform",
+    "ui_api",
+    "ui_bevy_render",
+    "scene",
+    "picking",
+    "scene",
+    "picking",
+    "pan_camera",
+    "bevy_picking",
+    "bevy_dev_tools",
+] }
+
+# ─── Dev / Debug ──────────────────────────────────────────────────────────────
+bevy-inspector-egui = { version = "0.36", features = [
+    "highlight_changes",
+], optional = true }
+bevy_framepace = "0.21.0"
+
+# ─── Audio ────────────────────────────────────────────────────────────────────
+bevy_seedling = { version = "0.7.0", optional = true }
+
+# ─── UI ───────────────────────────────────────────────────────────────────────
+bevy_ui_anchor = { git = "https://github.com/cyrilleberger/bevy_ui_anchor/", rev = "86e7270a8d5e6e31a9d8c853322153860f262e7d" }
+bevy_tweening = "0.15.0"
+pyri_tooltip = "0.6"
+bevy_image_font = { git = "https://github.com/GiantBlargg/bevy_image_font/", default-features = false, features = [
+    "atlas_sprites",
+], rev = "e76b7ae0ade9b46197c6655b6a75018ef1628443" }
+
+# ─── Game / Level ─────────────────────────────────────────────────────────────
+bevy_ecs_ldtk = "0.14"
+bevy_prefab = { git = "https://github.com/rockcen9/bevy_prefab", rev = "5ae77ad37d81c1728ced1a55c1e9f374e5c5980e" }
+bevy_spatial = { git = "https://github.com/rockcen9/bevy-spatial", rev = "dd0fb12b0881ab5b8645a478eadd1e534f109499", default-features = false, features = [
+    "kdtree",
+] }
+extol_sprite_layer = { git = "https://github.com/rockcen9/extol_sprite_layer", rev = "10655e3224005db0f705dbf49ce4977e80647a3c" }
+bevy_jornet = { git = "https://github.com/rockcen9/jornet", rev = "9b10f7d613bfbb59269ae336da40b4d34842e29c", optional = true }
+
+# ─── Assets ───────────────────────────────────────────────────────────────────
+bevy_common_assets = { version = "0.15.0", features = ["csv"] }
+
+# ─── Internal Crates ──────────────────────────────────────────────────────────
+rock_materials = { path = "crates/rock_materials", default-features = false }
+rock_particles = { path = "crates/rock_particles", default-features = false }
+
+# ─── Utilities ────────────────────────────────────────────────────────────────
+# Keep this in sync with Bevy
+rand = "0.9"
+bevy_rand = { version = "0.13", features = [
+    "rand_chacha",
+    "std",
+], default-features = false }
+serde = "1.0.228"
+smol_str = { version = "0.3.5", features = ["serde"] }
+strum = "0.27.2"
+strum_macros = "0.27.2"
+heck = "0.5.0"
+thiserror = "2.0.17"
+bitflags = "2"
+anyhow = "1"
+
+# ─── Logging / Tracing ────────────────────────────────────────────────────────
+# Compile low-severity logs out of web builds for performance.
+tracing = { version = "0.1", features = [
+    "max_level_debug",
+    "release_max_level_warn",
+] }
+
+# ─── Web / Platform ───────────────────────────────────────────────────────────
+getrandom = { version = "0.3", default-features = false, features = [
+    "wasm_js",
+] }
+# regex = "1"
+# bincode = "2"
+# Latest version that works with bevy_seedling
+wasm-bindgen = { version = "=0.2.108", optional = true }
+dotenvy = { version = "0.15", optional = true }
+webbrowser = { version = "1", optional = true }
+
+bevy_fix_cursor_unlock_web = { version = "0.3.0", optional = true }
+
+# ─── Features ─────────────────────────────────────────────────────────────────
+[features]
+default = ["backend"]
+native = []
+backend = [
+    "rock_particles/backend",
+    "dep:webbrowser",
+    "dep:bevy_jornet",
+    "dep:bevy_seedling",
+]
+dev = [
+    # Improve compile times for dev builds by linking Bevy as a dynamic library.
+    "bevy/dynamic_linking",
+    "bevy/bevy_dev_tools",
+    "bevy/bevy_ui_debug",
+    # Improve error messages coming from Bevy
+    "bevy/track_location",
+    "dep:bevy-inspector-egui",
+]
+dev_native = [
+    "dev",
+    "native",
+
+    "dep:dotenvy",
+    # "bevy/bevy_remote",
+    # Enable asset hot reloading for native dev builds.
+    # "bevy/file_watcher",
+    # Enable embedded asset hot reloading for native dev builds.
+    # "bevy/embedded_watcher",
+]
+web = [
+    "bevy/webgpu",
+    "bevy_seedling/web_audio",
+    "dep:wasm-bindgen",
+    "dep:bevy_fix_cursor_unlock_web",
+    "backend",
+]
+release = []
+
+# ─── Bevy CLI Metadata ────────────────────────────────────────────────────────
+[package.metadata.bevy_cli]
+default-features = false
+
+[package.metadata.bevy_cli.native]
+features = ["native"]
+
+[package.metadata.bevy_cli.native.dev]
+features = ["dev_native"]
+
+[package.metadata.bevy_cli.native.release]
+features = ["release"]
+
+[package.metadata.bevy_cli.web]
+features = ["web"]
+
+[package.metadata.bevy_cli.web.dev]
+features = ["dev"]
+
+[package.metadata.bevy_cli.web.release]
+features = ["release"]
+
+[package.metadata.bevy_cli.unstable]
+web-multi-threading = true
+
+# ─── Lints ────────────────────────────────────────────────────────────────────
+[lints.clippy]
+# Bevy supplies arguments to systems via dependency injection, so it's natural for systems to
+# request more than 7 arguments, which would undesirably trigger this lint.
+too_many_arguments = "allow"
+# Queries may access many components, which would undesirably trigger this lint.
+type_complexity = "allow"
+# Make sure macros use their standard braces, such as `[]` for `bevy_ecs::children!`.
+nonstandard_macro_braces = "warn"
+
+# ─── Build Profiles ───────────────────────────────────────────────────────────
+[profile.nobackend]
+inherits = "dev"
+opt-level = 1
+debug = true
+# Compile with Performance Optimizations:
+# https://bevyengine.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations
+
+[profile.dev]
+debug = false      # for faster compile time, but lldb debug won't work
+opt-level = 1
+lto = false
+incremental = true
+
+[profile.lldb] #
+inherits = "dev"
+debug = true
+
+[profile.dev.package."*"]
+debug = false # for faster compile time
+opt-level = 0 # hot patch doesn't work with opt-level 3
+
+# Remove expensive debug assertions due to <https://github.com/bevyengine/bevy/issues/14291>
+[profile.dev.package.wgpu-types]
+debug-assertions = false
+
+[profile.release]
+# Compile the entire crate as one unit.
+# Slows compile times, marginal improvements.
+codegen-units = 1
+# Do a second optimization pass over the entire program, including dependencies.
+# Slows compile times, marginal improvements.
+lto = "thin"
+
+# This profile will be used by `bevy run web` automatically.
+[profile.web-release]
+# Default to release profile values.
+inherits = "release"
+# Optimize with size in mind (also try "z", sometimes it is better).
+# Slightly slows compile times, great improvements to file size and runtime performance.
+opt-level = "s"
+# Strip all debugging information from the binary to slightly reduce file size.
+strip = "debuginfo"
+
+# Optimize for build time in CI.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = "line-tables-only"
+codegen-units = 4
+
+[profile.ci.package."*"]
+opt-level = 0
+
+[profile.wasm-dev]
+inherits = "dev"
+opt-level = 1
+
+[profile.server-dev]
+inherits = "dev"
+
+[profile.android-dev]
+inherits = "dev"
+
+[target.wasm32-unknown-unknown.dependencies]
+getrandom = "0.3"
+
+
+# Remove expensive debug assertions due to <https://github.com/bevyengine/bevy/issues/14291>
+[profile.release.package.wgpu-types]
+debug-assertions = false
+
+# ─── Patches ──────────────────────────────────────────────────────────────────
+[patch.crates-io]
+# Not released yet
+bevy_framepace = { git = "https://github.com/aevyrie/bevy_framepace" }
+
+# ─── WASM Overrides ───────────────────────────────────────────────────────────
+[target.'cfg(target_arch = "web")'.dependencies]
+bevy = { version = "0.18", default-features = false, features = ["webgpu"] }

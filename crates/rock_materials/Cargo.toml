@@ -1,0 +1,59 @@
+[package]
+name = "rock_materials"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = [
+    "bevy_render",
+    "bevy_sprite_render",
+    "bevy_asset",
+] }
+
+# Example-specific dependencies
+[dev-dependencies]
+bevy = { version = "0.18", features = ["2d"] }
+
+[[example]]
+name = "void_pattern"
+path = "examples/void_pattern.rs"
+
+[[example]]
+name = "gravity_well"
+path = "examples/gravity_well.rs"
+
+[[example]]
+name = "water_color"
+path = "examples/water_color.rs"
+
+[[example]]
+name = "dissolver"
+path = "examples/dissolver.rs"
+
+[[example]]
+name = "laser_beam"
+path = "examples/laser_beam.rs"
+
+[[example]]
+name = "fire_portal"
+path = "examples/fire_portal.rs"
+
+[[example]]
+name = "liquid"
+path = "examples/liquid.rs"
+
+[[example]]
+name = "soul"
+path = "examples/soul.rs"
+
+[[example]]
+name = "chromatic_aberration_v2"
+path = "examples/chromatic_aberration_v2.rs"
+
+[[example]]
+name = "mpeg_artifact_v2"
+path = "examples/mpeg_artifact_v2.rs"
+
+[[example]]
+name = "paper_cutout"
+path = "examples/paper_cutout.rs"

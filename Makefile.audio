@@ -1,0 +1,83 @@
+# Audio normalization Makefile for Bevy Chaos Dream
+
+# Directories
+SRC_DIR := assets_src/audio
+OUT_DIR := assets/audio
+
+# Find all source audio files
+MUSIC_SRC := $(wildcard $(SRC_DIR)/music/*.ogg $(SRC_DIR)/music/*.wav $(SRC_DIR)/music/*.mp3 $(SRC_DIR)/music/*.flac)
+SFX_SRC := $(wildcard $(SRC_DIR)/sfx/*.ogg $(SRC_DIR)/sfx/*.wav $(SRC_DIR)/sfx/*.mp3 $(SRC_DIR)/sfx/*.flac)
+UI_SRC := $(wildcard $(SRC_DIR)/ui/*.ogg $(SRC_DIR)/ui/*.wav $(SRC_DIR)/ui/*.mp3 $(SRC_DIR)/ui/*.flac)
+
+# Convert music to .ogg, keep sfx/ui extensions
+MUSIC_OUT := $(patsubst $(SRC_DIR)/music/%,$(OUT_DIR)/music/%.ogg,$(basename $(MUSIC_SRC)))
+SFX_OUT := $(patsubst $(SRC_DIR)/sfx/%,$(OUT_DIR)/sfx/%,$(SFX_SRC))
+UI_OUT := $(patsubst $(SRC_DIR)/ui/%,$(OUT_DIR)/ui/%,$(UI_SRC))
+
+# Default target
+.PHONY: all
+all: sfx ui
+	@echo "✅ Audio normalization complete!"
+
+.PHONY: music
+music: $(MUSIC_OUT)
+
+.PHONY: sfx
+sfx: $(SFX_OUT)
+
+.PHONY: ui
+ui: $(UI_OUT)
+
+# Music: convert to .ogg with -16 LUFS
+$(OUT_DIR)/music/%.ogg: $(SRC_DIR)/music/%.ogg
+	@mkdir -p $(OUT_DIR)/music
+	@echo "🎵 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1:first_pts=0" -c:a libvorbis -q:a 4 "$@" -y -loglevel error
+
+$(OUT_DIR)/music/%.ogg: $(SRC_DIR)/music/%.wav
+	@mkdir -p $(OUT_DIR)/music
+	@echo "🎵 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1:first_pts=0" -c:a libvorbis -q:a 4 "$@" -y -loglevel error
+
+$(OUT_DIR)/music/%.ogg: $(SRC_DIR)/music/%.mp3
+	@mkdir -p $(OUT_DIR)/music
+	@echo "🎵 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1:first_pts=0" -c:a libvorbis -q:a 4 "$@" -y -loglevel error
+
+$(OUT_DIR)/music/%.ogg: $(SRC_DIR)/music/%.flac
+	@mkdir -p $(OUT_DIR)/music
+	@echo "🎵 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=async=1:first_pts=0" -c:a libvorbis -q:a 4 "$@" -y -loglevel error
+
+# SFX: keep original format with -12 LUFS
+$(OUT_DIR)/sfx/%: $(SRC_DIR)/sfx/%
+	@mkdir -p $(OUT_DIR)/sfx
+	@echo "🔊 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-12:TP=-1.5:LRA=7" "$@" -y -loglevel error
+
+# UI: keep original format with -20 LUFS
+$(OUT_DIR)/ui/%: $(SRC_DIR)/ui/%
+	@mkdir -p $(OUT_DIR)/ui
+	@echo "🔔 Processing $< → $@"
+	@ffmpeg -i "$<" -af "loudnorm=I=-20:TP=-1.5:LRA=7" "$@" -y -loglevel error
+
+# Clean output files
+.PHONY: clean
+clean:
+	@echo "🗑️  Cleaning output files..."
+	@rm -rf $(OUT_DIR)/music/*.ogg
+	@rm -rf $(OUT_DIR)/sfx/*
+	@rm -rf $(OUT_DIR)/ui/*
+	@echo "✅ Clean complete!"
+
+# Show what would be processed
+.PHONY: list
+list:
+	@echo "Music files (→ .ogg):"
+	@echo "$(MUSIC_SRC)" | tr ' ' '\n' | sed 's/^/  /'
+	@echo ""
+	@echo "SFX files:"
+	@echo "$(SFX_SRC)" | tr ' ' '\n' | sed 's/^/  /'
+	@echo ""
+	@echo "UI files:"
+	@echo "$(UI_SRC)" | tr ' ' '\n' | sed 's/^/  /'

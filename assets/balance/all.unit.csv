@@ -1,0 +1,5 @@
+id,hp,atk,def,atk_speed,move_speed,range,weight,cost,game_unit_name,desc,counter,unity_type
+Shield,90.0,4.0,4.0,0.7,100.0,20.0,1.0,20,Depression,Counter Rage,Archer,Shield
+Spear,60.0,8.0,1.0,0.7,140.0,45.0,0.5,20,Chill,Counter Depression,Shield,Spear
+Archer,30.0,8.0,0.0,0.5,140.0,500.0,0.2,20,Rage,Counter Chill,Spear,Archer
+Cavalry,60.0,7.0,2.0,0.8,180.0,20.0,0.8,20,Panic,,Archer,Cavalry

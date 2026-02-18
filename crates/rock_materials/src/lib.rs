@@ -1,0 +1,60 @@
+pub mod blackhole;
+pub mod dissolver;
+pub mod chromatic_aberration;
+pub mod chromatic_aberration_v2;
+pub mod fire_portal;
+pub mod glitch;
+pub mod glitch_snake;
+pub mod gravity_well;
+pub mod laser_beam;
+pub mod liquid;
+pub mod mpeg_artifact;
+pub mod mpeg_artifact_v2;
+pub mod poison;
+pub mod void_pattern;
+pub mod water_color;
+pub mod soul;
+pub mod paper_cutout;
+pub mod wave_distortion;
+
+pub use blackhole::BlackholeMaterial;
+pub use dissolver::DissolverMaterial;
+pub use chromatic_aberration::ChromaticAberrationMaterial;
+pub use chromatic_aberration_v2::ChromaticAberrationV2Material;
+pub use fire_portal::FirePortalMaterial;
+pub use glitch::GlitchMaterial;
+pub use glitch_snake::GlitchSnakeMaterial;
+pub use gravity_well::GravityWellMaterial;
+pub use laser_beam::LaserBeamMaterial;
+pub use liquid::LiquidMaterial;
+pub use mpeg_artifact::MpegArtifactMaterial;
+pub use mpeg_artifact_v2::MpegArtifactV2Material;
+pub use poison::PoisonMaterial;
+pub use soul::SoulMaterial;
+pub use void_pattern::VoidPatternMaterial;
+pub use water_color::WaterColorMaterial;
+pub use paper_cutout::PaperCutoutMaterial;
+pub use wave_distortion::WaveDistortionMaterial;
+
+use bevy::prelude::*;
+
+pub fn plugin(app: &mut App) {
+    blackhole::plugin(app);
+    dissolver::plugin(app);
+    chromatic_aberration::plugin(app);
+    chromatic_aberration_v2::plugin(app);
+    fire_portal::plugin(app);
+    glitch::plugin(app);
+    glitch_snake::plugin(app);
+    gravity_well::plugin(app);
+    laser_beam::plugin(app);
+    liquid::plugin(app);
+    mpeg_artifact::plugin(app);
+    mpeg_artifact_v2::plugin(app);
+    poison::plugin(app);
+    soul::plugin(app);
+    void_pattern::plugin(app);
+    water_color::plugin(app);
+    paper_cutout::plugin(app);
+    wave_distortion::plugin(app);
+}
