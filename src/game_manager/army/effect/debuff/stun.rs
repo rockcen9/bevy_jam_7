@@ -3,7 +3,10 @@ use crate::prelude::*;
 pub(crate) fn plugin(app: &mut bevy::app::App) {
     app.add_systems(
         Update,
-        (tick_stun_debuff, prevent_attack_when_stunned.before(AttackSet::Attack)),
+        (
+            tick_stun_debuff,
+            prevent_attack_when_stunned.before(AttackSet::Attack),
+        ),
     );
 }
 
@@ -25,14 +28,17 @@ fn tick_stun_debuff(time: Res<Time>, mut query: Query<&mut ActiveDeBuffs>) {
 }
 
 /// Prevents stunned units from attacking by forcing them out of Attacking state.
-fn prevent_attack_when_stunned(mut query: Query<(&ActiveDeBuffs, &mut UnitState)>) {
+fn prevent_attack_when_stunned(mut query: Query<(&ActiveDeBuffs, &mut UnitAction)>) {
     for (debuffs, mut state) in &mut query {
-        if *state != UnitState::Attacking {
+        if *state != UnitAction::Attacking {
             continue;
         }
-        let stunned = debuffs.list.iter().any(|d| matches!(d, DebuffEffect::Stun(data) if data.stunning));
+        let stunned = debuffs
+            .list
+            .iter()
+            .any(|d| matches!(d, DebuffEffect::Stun(data) if data.stunning));
         if stunned {
-            *state = UnitState::Idle;
+            *state = UnitAction::Idle;
         }
     }
 }

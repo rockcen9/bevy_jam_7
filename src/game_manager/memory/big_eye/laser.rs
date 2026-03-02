@@ -1,6 +1,6 @@
 use bevy_rand::{global::GlobalRng, prelude::ChaCha8Rng};
-use rock_materials::LaserBeamMaterial;
 use rand::Rng;
+use rock_materials::LaserBeamMaterial;
 
 use crate::prelude::*;
 
@@ -34,8 +34,8 @@ struct BigEyeLaser {
 fn spawn_laser_on_big_eye_appear(
     mut commands: Commands,
     new_big_eyes: Query<(&Transform, Has<PlayerMemory>, Has<EnemyMemory>), Added<BigEyeActive>>,
-    player_units: Query<(Entity, &GlobalTransform), With<PlayerUnit>>,
-    enemy_units: Query<(Entity, &GlobalTransform), With<EnemyUnit>>,
+    player_units: Query<(Entity, &GlobalTransform), With<PlayerFaction>>,
+    enemy_units: Query<(Entity, &GlobalTransform), With<EnemyFaction>>,
     mut rng: Single<&mut ChaCha8Rng, With<GlobalRng>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut laser_materials: ResMut<Assets<LaserBeamMaterial>>,
@@ -113,8 +113,8 @@ fn tick_laser_and_fire(
     mut commands: Commands,
     time: Res<Time>,
     mut lasers: Query<(Entity, &mut BigEyeLaser)>,
-    player_units: Query<(Entity, &GlobalTransform), With<PlayerUnit>>,
-    enemy_units: Query<(Entity, &GlobalTransform), With<EnemyUnit>>,
+    player_units: Query<(Entity, &GlobalTransform), With<PlayerFaction>>,
+    enemy_units: Query<(Entity, &GlobalTransform), With<EnemyFaction>>,
 ) {
     for (laser_entity, mut laser) in &mut lasers {
         laser.lifetime.tick(time.delta());

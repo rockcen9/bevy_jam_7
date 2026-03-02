@@ -6,7 +6,7 @@ use crate::prelude::*;
     UnitGameName("x".into()),
     Pawn,
     Melee,
-    UnitStats::melee(UnitKind::Spear),
+    CombatAttributes::melee(UnitKind::Spear),
     Health::new_full(50.),
     ActiveBuffs{list: vec![BuffEffect::AttackSpeed(AttackSpeedBuffData{stacks: 1, max_stacks: 5, regen_timer: Timer::from_seconds(5.0, TimerMode::Once)})]}
 )]

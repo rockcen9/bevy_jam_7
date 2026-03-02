@@ -208,7 +208,7 @@ fn on_hover_start(
 /// Update panel text when panels are created
 fn update_panel_text(
     q_new_panels: Query<&PanelForUnit, Added<UnitHealthPanel>>,
-    q_unit_data: Query<(&Health, &UnitGameName, &UnitStats)>,
+    q_unit_data: Query<(&Health, &UnitGameName, &CombatAttributes)>,
     mut q_health_text: Query<&mut Text, With<HealthTextMarker>>,
     mut q_name_text: Query<&mut Text, (With<UnitNameMarker>, Without<HealthTextMarker>)>,
     mut q_damage_text: Query<

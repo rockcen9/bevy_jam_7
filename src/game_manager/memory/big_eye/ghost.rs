@@ -141,7 +141,7 @@ fn update_ghost_alpha_on_hover(
     window_q: Query<&Window>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     q_ghost: Query<&MeshMaterial2d<ChromaticAberrationMaterial>, With<BigEyeGhost>>,
-    q_units: Query<&GlobalTransform, With<PlayerUnit>>,
+    q_units: Query<&GlobalTransform, With<PlayerFaction>>,
     mut chromatic_materials: ResMut<Assets<ChromaticAberrationMaterial>>,
 ) {
     let Ok(material_handle) = q_ghost.single() else {
@@ -183,7 +183,7 @@ fn despawn_big_eye_ghost_on_release(
     q_ghost: Query<Entity, With<BigEyeGhost>>,
     window_q: Query<&Window>,
     q_camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    q_units: Query<(&GlobalTransform, &BelongToSquad), With<PlayerUnit>>,
+    q_units: Query<(&GlobalTransform, &BelongToSquad), With<PlayerFaction>>,
     q_squads: Query<&super::big_eye::BigEyeBuff>,
     memory_stats: Res<MemoryStatsCache>,
     mut player_gold: ResMut<PlayerGold>,

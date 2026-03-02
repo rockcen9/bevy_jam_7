@@ -22,7 +22,7 @@ pub fn setup_sprite(
     q_actor: Query<Entity, With<RequiredAseprite>>,
     q_belong_to: Query<(Entity, &BelongTo), With<MainMesh>>,
     q_prefab: Query<&PrefabId>,
-    q_enemy: Query<(), With<EnemyUnit>>,
+    q_enemy: Query<(), With<EnemyFaction>>,
     mut commands: Commands,
     server: Res<AssetServer>,
 ) {

@@ -7,7 +7,7 @@ pub struct Unit;
 
 #[derive(Component, Default, Reflect)]
 #[require(Unit, Faction::Player, OriginalColor(Color::WHITE))]
-pub struct PlayerUnit;
+pub struct PlayerFaction;
 
 #[derive(Component, Reflect)]
 pub struct OriginalColor(pub Color);

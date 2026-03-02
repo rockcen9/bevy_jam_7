@@ -7,7 +7,7 @@ pub(crate) fn plugin(_app: &mut App) {
 
 #[derive(Component, Default, Reflect)]
 #[require(Unit, Faction::Enemy, OriginalColor(Color::WHITE))]
-pub struct EnemyUnit;
+pub struct EnemyFaction;
 
 // fn deepen_color_system(
 //     q_enemy: Query<Entity, With<EnemyUnit>>,

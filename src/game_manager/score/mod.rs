@@ -30,7 +30,7 @@ pub(crate) fn plugin(app: &mut App) {
 fn record_battle_start(
     mut battle_score: ResMut<BattleScore>,
     time: Res<Time<Virtual>>,
-    q_player_units: Query<(), With<PlayerUnit>>,
+    q_player_units: Query<(), With<PlayerFaction>>,
 ) {
     let player_count = q_player_units.iter().count();
     battle_score.battle_start_time = time.elapsed_secs_f64();
@@ -47,7 +47,7 @@ fn record_battle_start(
 fn calculate_battle_score(
     mut battle_score: ResMut<BattleScore>,
     time: Res<Time<Virtual>>,
-    q_player_units: Query<(), With<PlayerUnit>>,
+    q_player_units: Query<(), With<PlayerFaction>>,
     player_gold: Res<crate::game_manager::shop::PlayerGold>,
 ) {
     info!("=== calculate_battle_score called ===");

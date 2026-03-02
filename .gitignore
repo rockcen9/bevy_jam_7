@@ -28,3 +28,5 @@ perf.data.old
 .env
 src/dev_tools/inspect/sys_filter.rs
 /wasm_builds
+
+.vscode

@@ -30,7 +30,7 @@ pub struct BaseScale(pub Vec3);
 /// Velocity-based squash animation system.
 /// Performance: Native O(M) using ECS O(1) direct lookup. Zero heap allocation per frame.
 fn velocity_based_squash_animation(
-    q_units: Query<&Velocity, Or<(With<PlayerUnit>, With<EnemyUnit>)>>,
+    q_units: Query<&Velocity, Or<(With<PlayerFaction>, With<EnemyFaction>)>>,
     q_model: Query<(Entity, &Transform, &BelongTo, Option<&BaseScale>), With<Model>>,
     q_squashing: Query<(), With<ActiveSquashAnimation>>,
     mut commands: Commands,

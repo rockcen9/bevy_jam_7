@@ -16,14 +16,14 @@ fn apply_unit_stats_from_csv(
     mut q_units: Query<
         (
             Entity,
-            &mut UnitStats,
+            &mut CombatAttributes,
             &mut Health,
             &mut UnitCollider,
             Option<&Shield>,
             Option<&Archer>,
             Option<&Cavalry>,
             Option<&Spear>,
-            Option<&EnemyUnit>,
+            Option<&EnemyFaction>,
         ),
         (With<Unit>, Without<StatsInitialized>),
     >,
@@ -76,9 +76,9 @@ fn apply_unit_stats_from_csv(
             // Apply weight to collider
             collider.push_strength = row.weight;
 
-            commands.entity(entity).insert(
-                UnitGameName(row.game_unit_name.as_str().into()),
-            );
+            commands
+                .entity(entity)
+                .insert(UnitGameName(row.game_unit_name.as_str().into()));
 
             // info!("Applied CSV stats to {:?} ({})", entity, unit_id);
         }

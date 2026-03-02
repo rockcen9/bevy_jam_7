@@ -70,9 +70,9 @@ fn archer_attack_system(
     mut q_archers: Query<
         (
             Entity,
-            &UnitState,
+            &UnitAction,
             &Target,
-            &UnitStats,
+            &CombatAttributes,
             &mut AttackTimer,
             &GlobalTransform,
         ),
@@ -84,7 +84,7 @@ fn archer_attack_system(
     for (archer_entity, state, target, stats, mut attack_timer, archer_transform) in &mut q_archers
     {
         // Only attack when in Attacking state
-        if *state != UnitState::Attacking {
+        if *state != UnitAction::Attacking {
             continue;
         }
 

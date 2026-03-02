@@ -83,7 +83,7 @@ fn spawn_bottom_right_ui(
 
 fn handle_fight_button(
     button_q: Query<(Entity, &Interaction), (Changed<Interaction>, With<FightButtonMarker>)>,
-    player_units: Query<(), With<PlayerUnit>>,
+    player_units: Query<(), With<PlayerFaction>>,
     mut game_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
 ) {

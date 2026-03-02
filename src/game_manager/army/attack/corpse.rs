@@ -1,7 +1,7 @@
 use bevy_rand::{global::GlobalRng, prelude::ChaCha8Rng};
 use extol_sprite_layer::LayerIndex;
-use rock_particles::{ComboRingColor, ComboRingEvent};
 use rand::Rng;
+use rock_particles::{ComboRingColor, ComboRingEvent};
 
 use crate::prelude::*;
 pub(crate) fn plugin(app: &mut bevy::app::App) {
@@ -11,8 +11,14 @@ pub(crate) fn plugin(app: &mut bevy::app::App) {
 #[derive(Component, Default)]
 pub struct Corpse;
 fn corpse_system(
-    mut q_enemy_units: Query<(&Health, &GlobalTransform), (With<EnemyUnit>, Without<PlayerUnit>)>,
-    mut q_player_units: Query<(&Health, &GlobalTransform), (With<PlayerUnit>, Without<EnemyUnit>)>,
+    mut q_enemy_units: Query<
+        (&Health, &GlobalTransform),
+        (With<EnemyFaction>, Without<PlayerFaction>),
+    >,
+    mut q_player_units: Query<
+        (&Health, &GlobalTransform),
+        (With<PlayerFaction>, Without<EnemyFaction>),
+    >,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut rng: Single<&mut ChaCha8Rng, With<GlobalRng>>,

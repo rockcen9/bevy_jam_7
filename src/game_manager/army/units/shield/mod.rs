@@ -7,7 +7,7 @@ mod attack;
     SpriteActor,
     Pawn,
     Melee,
-    UnitStats::melee(UnitKind::Shield),
+    CombatAttributes::melee(UnitKind::Shield),
     Health::new_full(100.),
     ActiveBuffs { list: vec![BuffEffect::Block(BlockBuffData::default())] }
 )]

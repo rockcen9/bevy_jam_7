@@ -64,8 +64,8 @@ fn spawn_units_in_formation(
         ));
 
         match faction {
-            Faction::Player => entity_commands.insert(PlayerUnit),
-            Faction::Enemy => entity_commands.insert(EnemyUnit),
+            Faction::Player => entity_commands.insert(PlayerFaction),
+            Faction::Enemy => entity_commands.insert(EnemyFaction),
         };
 
         entities.push(entity_commands.id());

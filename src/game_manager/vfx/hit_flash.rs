@@ -20,8 +20,8 @@ fn on_hit_flash_event(
     event: On<HitFlashVfxEvent>,
     mut q_sprite: Query<(&mut Sprite, &BelongTo), With<MainMesh>>,
     q_original_color: Query<&OriginalColor>,
-    q_player: Query<(), With<PlayerUnit>>,
-    q_enemy: Query<(), With<EnemyUnit>>,
+    q_player: Query<(), With<PlayerFaction>>,
+    q_enemy: Query<(), With<EnemyFaction>>,
     mut commands: Commands,
     _palette: Res<ColorPalette>,
 ) {

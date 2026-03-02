@@ -356,8 +356,8 @@ fn spawn_top_middle_ui(
 /// Record initial unit counts once at the start
 fn record_initial_counts(
     mut initial_counts: ResMut<InitialUnitCounts>,
-    q_player_units: Query<(), With<PlayerUnit>>,
-    q_enemy_units: Query<(), With<EnemyUnit>>,
+    q_player_units: Query<(), With<PlayerFaction>>,
+    q_enemy_units: Query<(), With<EnemyFaction>>,
 ) {
     // Only record once when counts are zero
     if initial_counts.player == 0 && initial_counts.enemy == 0 {
@@ -374,8 +374,8 @@ fn record_initial_counts(
 /// Update the battle bars based on current unit counts
 fn update_battle_bars(
     initial_counts: Res<InitialUnitCounts>,
-    q_player_units: Query<(), With<PlayerUnit>>,
-    q_enemy_units: Query<(), With<EnemyUnit>>,
+    q_player_units: Query<(), With<PlayerFaction>>,
+    q_enemy_units: Query<(), With<EnemyFaction>>,
     mut q_player_bar: Query<&mut Node, (With<PlayerUnitBarMarker>, Without<EnemyUnitBarMarker>)>,
     mut q_enemy_bar: Query<&mut Node, (With<EnemyUnitBarMarker>, Without<PlayerUnitBarMarker>)>,
     mut q_player_count: Query<

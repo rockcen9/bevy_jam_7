@@ -98,8 +98,8 @@ pub struct UnitReductionMessage {
 
 fn reset_battle_status(
     mut battle_status: ResMut<BattleStatus>,
-    player_units: Query<(), With<PlayerUnit>>,
-    enemy_units: Query<(), With<EnemyUnit>>,
+    player_units: Query<(), With<PlayerFaction>>,
+    enemy_units: Query<(), With<EnemyFaction>>,
 ) {
     let player_count = player_units.iter().count() as u32;
     let enemy_count = enemy_units.iter().count() as u32;
@@ -116,8 +116,8 @@ fn reset_battle_status(
 
 fn track_unit_reduction(
     mut battle_status: ResMut<BattleStatus>,
-    player_units: Query<(), With<PlayerUnit>>,
-    enemy_units: Query<(), With<EnemyUnit>>,
+    player_units: Query<(), With<PlayerFaction>>,
+    enemy_units: Query<(), With<EnemyFaction>>,
     mut message_writer: MessageWriter<UnitReductionMessage>,
 ) {
     let current_player_count = player_units.iter().count() as u32;

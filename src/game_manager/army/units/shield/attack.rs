@@ -22,14 +22,14 @@ pub(crate) fn plugin(app: &mut bevy::app::App) {
 fn attack_system(
     time: Res<Time>,
     mut q_attackers: Query<
-        (Entity, &UnitState, &Target, &UnitStats, &mut AttackTimer),
+        (Entity, &UnitAction, &Target, &CombatAttributes, &mut AttackTimer),
         With<Melee>,
     >,
     mut commands: Commands,
 ) {
     for (entity, state, target, stats, mut attack_timer) in &mut q_attackers {
         // Only attack when in Attacking state
-        if *state != UnitState::Attacking {
+        if *state != UnitAction::Attacking {
             continue;
         }
 
@@ -54,7 +54,7 @@ fn attack_system(
 /// Debug: Draw lines from one player unit to its target.
 fn _debug_draw_targets(
     mut gizmos: Gizmos,
-    q_player_units: Query<(&GlobalTransform, &Target), With<PlayerUnit>>,
+    q_player_units: Query<(&GlobalTransform, &Target), With<PlayerFaction>>,
     q_targets: Query<&GlobalTransform>,
 ) {
     let Some((transform, target)) = q_player_units.iter().last() else {

@@ -42,7 +42,7 @@ fn tick_attack_speed_regen(time: Res<Time>, mut query: Query<&mut ActiveBuffs>) 
 }
 
 /// Applies attack speed buff: each stack reduces attack timer duration by 5%.
-fn apply_attack_speed_buff(mut query: Query<(&ActiveBuffs, &UnitStats, &mut AttackTimer)>) {
+fn apply_attack_speed_buff(mut query: Query<(&ActiveBuffs, &CombatAttributes, &mut AttackTimer)>) {
     for (buffs, stats, mut attack_timer) in &mut query {
         let mut total_stacks = 0u32;
         for buff in &buffs.list {

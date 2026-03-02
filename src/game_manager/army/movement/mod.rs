@@ -1,8 +1,5 @@
-use std::time::Duration;
-
-use bevy_spatial::{
-    AutomaticUpdate, SpatialAccess, SpatialStructure, TransformMode, kdtree::KDTree2,
-};
+const UNIT_SIZE_1080: f32 = 128.0;
+use bevy::platform::collections::HashMap;
 
 use crate::prelude::*;
 // ============================================================================
@@ -10,6 +7,20 @@ use crate::prelude::*;
 // ============================================================================
 
 pub(crate) fn plugin(app: &mut bevy::app::App) {
+    // Init spatial grid resource
+    app.init_resource::<UnitSpatialGrid>();
+
+    app.add_systems(
+        Update,
+        (|mut q_unit: Query<(Entity, &mut Transform, &GlobalTransform), With<Unit>>,
+          mut commands: Commands| {
+            for (entity, mut transform, global_transform) in q_unit.iter_mut() {
+                transform.translation = global_transform.translation();
+                commands.entity(entity).remove::<ChildOf>();
+            }
+        })
+        .run_if(in_state(GameState::Battle)),
+    );
     // Add velocity tracking systems
     app.add_systems(
         Update,
@@ -17,28 +28,14 @@ pub(crate) fn plugin(app: &mut bevy::app::App) {
             .chain()
             .in_set(MovementSet::VelocityTracking),
     );
-    // Add spatial indexing plugins for both unit types
-    // Using KDTree2 for 2D spatial queries (ignores Z axis)
-    // GlobalTransform mode because units are children of squads
-    app.add_plugins(
-        AutomaticUpdate::<PlayerUnit>::new()
-            .with_spatial_ds(SpatialStructure::KDTree2)
-            .with_transform(TransformMode::GlobalTransform)
-            .with_frequency(Duration::from_millis(50)),
-    );
-    app.add_plugins(
-        AutomaticUpdate::<EnemyUnit>::new()
-            .with_spatial_ds(SpatialStructure::KDTree2)
-            .with_transform(TransformMode::GlobalTransform)
-            .with_frequency(Duration::from_millis(50)),
-    );
 
-    // Configure system ordering: VelocityTracking -> TargetFinding -> Movement -> Separation
-    // VelocityTracking must run first so animations can read velocity in the same frame
+    // Configure system ordering:
+    // VelocityTracking -> SpatialGridUpdate -> TargetFinding -> Movement -> Separation
     app.configure_sets(
         Update,
         (
             MovementSet::VelocityTracking,
+            MovementSet::SpatialGridUpdate,
             MovementSet::TargetFinding,
             MovementSet::Movement,
             MovementSet::Separation,
@@ -50,6 +47,7 @@ pub(crate) fn plugin(app: &mut bevy::app::App) {
     app.add_systems(
         Update,
         (
+            update_spatial_grid.in_set(MovementSet::SpatialGridUpdate),
             target_finding_system.in_set(MovementSet::TargetFinding),
             movement_and_state_system.in_set(MovementSet::Movement),
             separation_system.in_set(MovementSet::Separation),
@@ -76,17 +74,16 @@ pub struct Melee;
 pub struct Ranged;
 /// Unit state machine for movement and combat behavior.
 #[derive(Component, Default, PartialEq, Clone, Copy, Debug, Reflect)]
-pub enum UnitState {
+pub enum UnitAction {
     #[default]
     Idle,
     Moving,
     Attacking,
-    Dead,
 }
 
 /// Stats that control unit movement and attack behavior.
 #[derive(Component, Debug, Clone, Reflect)]
-pub struct UnitStats {
+pub struct CombatAttributes {
     /// Movement speed in pixels per second.
     pub speed: f32,
     /// Distance at which the unit can attack its target.
@@ -103,7 +100,7 @@ pub struct UnitStats {
     pub counter: Option<UnitKind>,
 }
 
-impl UnitStats {
+impl CombatAttributes {
     pub fn melee(unity_type: UnitKind) -> Self {
         Self {
             speed: 100.0,
@@ -140,7 +137,7 @@ pub struct UnitCollider {
 impl Default for UnitCollider {
     fn default() -> Self {
         Self {
-            radius: 32.0, // Half of 64px unit size
+            radius: UNIT_SIZE_1080 / 2.0,
             push_strength: 0.5,
         }
     }
@@ -151,14 +148,171 @@ impl Default for UnitCollider {
 pub struct Target(pub Option<Entity>);
 
 // ============================================================================
-// Spatial Index Type Aliases
+// Uniform Spatial Hash Grid
 // ============================================================================
 
-/// Spatial index for player units (enemies query this to find players).
-type PlayerSpatialTree = KDTree2<PlayerUnit>;
+/// Cell size for the spatial hash grid.
+/// Must be >= the largest query radius used (ALLY_SEPARATION_RADIUS = 90,
+/// max collision diameter = 64). 128 gives a comfortable margin so a single
+/// 9-cell neighbourhood covers all relevant neighbours.
+const GRID_CELL_SIZE: f32 = 128.0;
 
-/// Spatial index for enemy units (players query this to find enemies).
-type EnemySpatialTree = KDTree2<EnemyUnit>;
+fn world_to_grid(pos: Vec2) -> (i32, i32) {
+    (
+        (pos.x / GRID_CELL_SIZE).floor() as i32,
+        (pos.y / GRID_CELL_SIZE).floor() as i32,
+    )
+}
+
+/// Per-unit data stored in the spatial grid.
+#[derive(Clone, Copy)]
+pub(crate) struct GridUnit {
+    pub entity: Entity,
+    pub pos: Vec2,
+    pub radius: f32,
+    pub push_strength: f32,
+    pub faction: Faction,
+}
+
+/// Uniform spatial hash grid for O(1) neighbour lookups.
+/// Rebuilt every frame in O(N).
+#[derive(Resource, Default)]
+pub(crate) struct UnitSpatialGrid {
+    pub cells: HashMap<(i32, i32), Vec<GridUnit>>,
+}
+
+/// Maximum ring radius for expanding search (covers 1920x1080 diagonal ≈ 2203px).
+const MAX_RING_RADIUS: i32 = 32;
+
+impl UnitSpatialGrid {
+    /// Iterate cells on the perimeter of a square ring at distance `r` from `center`.
+    /// Ring 0 = just the center cell (1 cell).
+    /// Ring r = the border cells of the (2r+1)×(2r+1) square (8r cells for r>0).
+    fn for_each_in_ring(&self, center: (i32, i32), r: i32, mut f: impl FnMut(&GridUnit)) {
+        if r == 0 {
+            if let Some(neighbors) = self.cells.get(&center) {
+                for n in neighbors {
+                    f(n);
+                }
+            }
+            return;
+        }
+        // Top and bottom rows of the ring
+        for dx in -r..=r {
+            for &dy in &[-r, r] {
+                let cell = (center.0 + dx, center.1 + dy);
+                if let Some(neighbors) = self.cells.get(&cell) {
+                    for n in neighbors {
+                        f(n);
+                    }
+                }
+            }
+        }
+        // Left and right columns (excluding corners already covered)
+        for dy in (-r + 1)..r {
+            for &dx in &[-r, r] {
+                let cell = (center.0 + dx, center.1 + dy);
+                if let Some(neighbors) = self.cells.get(&cell) {
+                    for n in neighbors {
+                        f(n);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Find the nearest alive enemy using expanding ring search.
+    /// Starts from the unit's cell and expands outward one ring at a time.
+    /// Stops as soon as a ring produces at least one candidate, with one
+    /// extra ring to catch enemies at the boundary.
+    // Grid contains only alive units (update_spatial_grid skips Dead), so no state check needed.
+    pub(crate) fn find_nearest_enemy(
+        &self,
+        my_entity: Entity,
+        my_pos: Vec2,
+        my_faction: Faction,
+        max_radius: f32,
+    ) -> Option<Entity> {
+        let my_cell = world_to_grid(my_pos);
+        let max_ring = (max_radius / GRID_CELL_SIZE).ceil() as i32;
+        let max_ring = max_ring.min(MAX_RING_RADIUS);
+        let radius_sq = max_radius * max_radius;
+
+        let mut best: Option<(Entity, f32)> = None;
+        let mut found_ring: Option<i32> = None;
+
+        for r in 0..=max_ring {
+            // If we found something 2 rings ago, the best is already confirmed
+            // (one extra ring ensures we don't miss a closer unit at the boundary)
+            if let Some(fr) = found_ring {
+                if r > fr + 1 {
+                    break;
+                }
+            }
+
+            self.for_each_in_ring(my_cell, r, |neighbor| {
+                if neighbor.entity == my_entity {
+                    return;
+                }
+                if neighbor.faction == my_faction {
+                    return;
+                }
+
+                let dist_sq = my_pos.distance_squared(neighbor.pos);
+                if dist_sq > radius_sq {
+                    return;
+                }
+
+                if best.is_none() || dist_sq < best.unwrap().1 {
+                    best = Some((neighbor.entity, dist_sq));
+                }
+            });
+
+            if best.is_some() && found_ring.is_none() {
+                found_ring = Some(r);
+            }
+        }
+
+        best.map(|(e, _)| e)
+    }
+}
+
+const NEIGHBOR_OFFSETS: [(i32, i32); 9] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (0, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
+
+/// Rebuilds the spatial hash grid every frame. O(N).
+/// Dead units are despawned, so every entity in the query is alive.
+fn update_spatial_grid(
+    mut grid: ResMut<UnitSpatialGrid>,
+    q_units: Query<(Entity, &GlobalTransform, &UnitCollider, &Faction)>,
+) {
+    // Clear each Vec's contents but retain its allocated capacity (zero heap allocations after warm-up).
+    for vec in grid.cells.values_mut() {
+        vec.clear();
+    }
+
+    for (entity, global_transform, collider, faction) in q_units.iter() {
+        let pos = global_transform.translation().truncate();
+        let cell_coord = world_to_grid(pos);
+
+        grid.cells.entry(cell_coord).or_default().push(GridUnit {
+            entity,
+            pos,
+            radius: collider.radius,
+            push_strength: collider.push_strength,
+            faction: *faction,
+        });
+    }
+}
 
 // ============================================================================
 // System Sets for Ordering
@@ -168,6 +322,8 @@ type EnemySpatialTree = KDTree2<EnemyUnit>;
 pub enum MovementSet {
     /// Tracks velocity from position changes - runs first
     VelocityTracking,
+    /// Rebuilds the spatial hash grid
+    SpatialGridUpdate,
     TargetFinding,
     Movement,
     Separation,
@@ -185,254 +341,162 @@ const K_NEAREST_CANDIDATES: usize = 3;
 /// This prevents "tunnel vision" where units ignore enemies blocking their path.
 const MELEE_THRESHOLD: f32 = 80.0;
 
-/// Finds targets for units using spatial indexing (k-d tree).
-/// Uses k-nearest neighbor search with anti-convergence heuristic.
+/// How many frames to spread target searches across.
+/// Units without a target are bucketed by entity index so at most 1/N do a full
+/// grid search per frame, capping the per-frame cost at large unit counts.
+const TARGET_SLICE_COUNT: u32 = 10;
+
+/// Finds targets for units using the spatial hash grid.
 ///
-/// Implements "Melee Proximity Override": if an enemy is within MELEE_THRESHOLD,
-/// the unit immediately switches to that target, unless current target is already
-/// in melee range (debounce to prevent flickering).
+/// Execution order per unit:
+/// 1. Debounce  – current target still in melee range → keep it, skip all work.
+/// 2. Valid target check – still has a living target → skip all work.
+/// 3. Time slicing – only 1/TARGET_SLICE_COUNT of targetless units search per frame.
+/// 4. Melee Proximity Override – snap to any enemy within MELEE_THRESHOLD.
+/// 5. Full grid search – expanding ring until an enemy is found.
 fn target_finding_system(
-    mut q_player_units: Query<
-        (Entity, &GlobalTransform, &mut Target),
-        (With<PlayerUnit>, Without<EnemyUnit>),
-    >,
-    mut q_enemy_units: Query<
-        (Entity, &GlobalTransform, &mut Target),
-        (With<EnemyUnit>, Without<PlayerUnit>),
-    >,
-    player_tree: Res<PlayerSpatialTree>,
-    enemy_tree: Res<EnemySpatialTree>,
-    q_unit_state: Query<&UnitState>,
-    q_global_transform: Query<&GlobalTransform>,
+    grid: Res<UnitSpatialGrid>,
+    mut frame: Local<u32>,
+    mut q_units: Query<(Entity, &Transform, &mut Target, &Faction, &CombatAttributes)>,
+    q_pawn: Query<&Pawn>,
+    q_transform: Query<&Transform>,
 ) {
-    // Player units find enemies using the enemy spatial tree
-    for (entity, transform, mut target) in &mut q_player_units {
-        let my_pos = transform.translation().truncate();
+    let current_frame = *frame;
+    *frame = frame.wrapping_add(1);
 
-        // Debounce: if current target is already in melee range, keep it
-        if is_current_target_in_melee_range(my_pos, &target, &q_unit_state, &q_global_transform) {
+    for (entity, transform, mut target, faction, _stats) in &mut q_units {
+        let my_pos = transform.translation.truncate();
+
+        // 1. Debounce: current target is alive and already in melee range → keep it
+        if is_current_target_in_melee_range(my_pos, &target, &q_transform) {
             continue;
         }
 
-        // Melee Proximity Override: check if closest alive enemy is within melee threshold
-        // Use k=5 to skip over any dead units (corpses) that might be closer
-        if let Some(new_target) = check_melee_override(
-            my_pos,
-            enemy_tree.k_nearest_neighbour(my_pos, 5),
-            &q_unit_state,
-        ) {
+        // 2. Still has a valid living target → nothing to do
+        if !needs_new_target(&target, &q_pawn) {
+            continue;
+        }
+
+        // 3. Time slicing: spread targetless units across TARGET_SLICE_COUNT frames
+        //    to avoid thousands of full grid searches in a single frame.
+        if entity.index_u32() % TARGET_SLICE_COUNT != current_frame % TARGET_SLICE_COUNT {
+            continue;
+        }
+
+        // 4. Melee Proximity Override: snap to any enemy already inside melee range
+        if let Some(new_target) = grid.find_nearest_enemy(entity, my_pos, *faction, MELEE_THRESHOLD)
+        {
             target.0 = Some(new_target);
             continue;
         }
 
-        // Standard logic: only find new target if current is invalid
-        if !needs_new_target(&target, &q_unit_state) {
-            continue;
-        }
-
-        target.0 = find_target_from_candidates(
-            entity,
-            my_pos,
-            enemy_tree.k_nearest_neighbour(my_pos, K_NEAREST_CANDIDATES),
-            &q_unit_state,
-        );
-    }
-
-    // Enemy units find players using the player spatial tree
-    for (entity, transform, mut target) in &mut q_enemy_units {
-        let my_pos = transform.translation().truncate();
-
-        // Debounce: if current target is already in melee range, keep it
-        if is_current_target_in_melee_range(my_pos, &target, &q_unit_state, &q_global_transform) {
-            continue;
-        }
-
-        // Melee Proximity Override: check if closest alive player is within melee threshold
-        // Use k=5 to skip over any dead units (corpses) that might be closer
-        if let Some(new_target) = check_melee_override(
-            my_pos,
-            player_tree.k_nearest_neighbour(my_pos, 5),
-            &q_unit_state,
-        ) {
-            target.0 = Some(new_target);
-            continue;
-        }
-
-        // Standard logic: only find new target if current is invalid
-        if !needs_new_target(&target, &q_unit_state) {
-            continue;
-        }
-
-        target.0 = find_target_from_candidates(
-            entity,
-            my_pos,
-            player_tree.k_nearest_neighbour(my_pos, K_NEAREST_CANDIDATES),
-            &q_unit_state,
-        );
+        // 5. Full grid search
+        target.0 = find_target_from_grid(entity, my_pos, *faction, &grid);
     }
 }
 
-/// Checks if the current target is alive and within melee range.
-/// Used for debouncing to prevent target flickering.
+/// Checks if the current target is within melee range.
+/// Dead units are despawned, so a missing entity means the target is gone.
 fn is_current_target_in_melee_range(
     my_pos: Vec2,
     target: &Target,
-    q_unit_state: &Query<&UnitState>,
-    q_global_transform: &Query<&GlobalTransform>,
+    q_transform: &Query<&Transform>,
 ) -> bool {
     let Some(target_entity) = target.0 else {
         return false;
     };
 
-    // Check if target is alive
-    if let Ok(state) = q_unit_state.get(target_entity) {
-        if *state == UnitState::Dead {
-            return false;
-        }
-    } else {
-        return false;
-    }
-
-    // Check if target is within melee range
-    let Ok(target_transform) = q_global_transform.get(target_entity) else {
+    let Ok(target_transform) = q_transform.get(target_entity) else {
         return false;
     };
 
-    let target_pos = target_transform.translation().truncate();
+    let target_pos = target_transform.translation.truncate();
     let distance_sq = my_pos.distance_squared(target_pos);
     let threshold_sq = MELEE_THRESHOLD * MELEE_THRESHOLD;
 
     distance_sq < threshold_sq
 }
 
-/// Checks if the closest alive enemy is within melee threshold.
-/// Returns Some(entity) if override should happen, None otherwise.
-/// Iterates through candidates to skip dead units (e.g., corpses blocking the way).
-fn check_melee_override(
-    my_pos: Vec2,
-    nearest: Vec<(Vec2, Option<Entity>)>,
-    q_unit_state: &Query<&UnitState>,
-) -> Option<Entity> {
-    let threshold_sq = MELEE_THRESHOLD * MELEE_THRESHOLD;
-
-    for (pos, maybe_entity) in nearest {
-        let Some(entity) = maybe_entity else {
-            continue;
-        };
-
-        // Check if entity is alive
-        if let Ok(state) = q_unit_state.get(entity) {
-            if *state == UnitState::Dead {
-                continue; // Skip dead units, check next candidate
-            }
-        } else {
-            continue;
-        }
-
-        // 2D distance only (X and Y) as per project rules
-        let distance_sq = my_pos.distance_squared(pos);
-
-        if distance_sq < threshold_sq {
-            return Some(entity);
-        } else {
-            // k_nearest is sorted by distance, so if the first alive unit is too far,
-            // all subsequent ones will be even farther
-            return None;
-        }
-    }
-    None
-}
-
-/// Checks if a unit needs a new target (no target, or target is dead/despawned).
-fn needs_new_target(target: &Target, q_unit_state: &Query<&UnitState>) -> bool {
+fn needs_new_target(target: &Target, q_unit: &Query<&Pawn>) -> bool {
     match target.0 {
         None => true,
-        Some(target_entity) => {
-            // Check if target still exists and is not dead
-            match q_unit_state.get(target_entity) {
-                Ok(state) => *state == UnitState::Dead,
-                Err(_) => true, // Entity despawned
-            }
-        }
+        Some(target_entity) => !q_unit.contains(target_entity),
     }
 }
 
-/// Selects a target from k-nearest candidates with anti-convergence heuristic.
+/// Selects a target from the spatial grid using expanding ring search
+/// with anti-convergence heuristic.
 ///
 /// Strategy:
-/// 1. Filter out dead/despawned entities
-/// 2. Use entity index as a deterministic "jitter" to spread target selection
-///    - This prevents all backline units from locking onto the exact same front-line enemy
-/// 3. Still prioritize closer targets, but with slight variance
-fn find_target_from_candidates(
+/// 1. Expand outward ring by ring until we find enemies
+/// 2. Collect candidates from the found ring + 1 extra ring (boundary)
+/// 3. Use entity index as a deterministic "jitter" to spread target selection
+// Grid contains only alive units (update_spatial_grid skips Dead), so no state check needed.
+fn find_target_from_grid(
     self_entity: Entity,
     my_pos: Vec2,
-    candidates: Vec<(Vec2, Option<Entity>)>,
-    q_unit_state: &Query<&UnitState>,
+    my_faction: Faction,
+    grid: &UnitSpatialGrid,
 ) -> Option<Entity> {
-    // Filter to only valid (alive, existing) candidates
-    let valid_candidates: Vec<(Entity, Vec2, f32)> = candidates
-        .into_iter()
-        .filter_map(|(pos, maybe_entity)| {
-            let entity = maybe_entity?;
+    let my_cell = world_to_grid(my_pos);
 
-            // Skip dead entities
-            if let Ok(state) = q_unit_state.get(entity) {
-                if *state == UnitState::Dead {
-                    return None;
-                }
-            } else {
-                // Entity doesn't have UnitState (despawned or invalid)
-                return None;
+    let mut candidates: Vec<(Entity, f32)> = Vec::new();
+    let mut found_ring: Option<i32> = None;
+
+    for r in 0..=MAX_RING_RADIUS {
+        // Stop after one extra ring past the first ring with results
+        if let Some(fr) = found_ring {
+            if r > fr + 1 {
+                break;
+            }
+        }
+
+        grid.for_each_in_ring(my_cell, r, |neighbor| {
+            if neighbor.entity == self_entity {
+                return;
+            }
+            if neighbor.faction == my_faction {
+                return;
             }
 
-            // 2D distance only (X and Y) as per project rules
-            let dist_sq = my_pos.distance_squared(pos);
-            Some((entity, pos, dist_sq))
-        })
-        .collect();
+            let dist_sq = my_pos.distance_squared(neighbor.pos);
+            candidates.push((neighbor.entity, dist_sq));
+        });
 
-    if valid_candidates.is_empty() {
+        if !candidates.is_empty() && found_ring.is_none() {
+            found_ring = Some(r);
+        }
+    }
+
+    if candidates.is_empty() {
         return None;
     }
 
-    // If only one candidate, return it
-    if valid_candidates.len() == 1 {
-        return Some(valid_candidates[0].0);
+    if candidates.len() == 1 {
+        return Some(candidates[0].0);
     }
+
+    // Sort by distance and take top K
+    candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    candidates.truncate(K_NEAREST_CANDIDATES);
 
     // Anti-convergence heuristic:
     // Use the querying entity's index to deterministically pick from top candidates.
-    // This spreads targets across the army without pure randomness.
     let self_index = self_entity.index_u32() as usize;
 
-    // Find the closest distance squared for reference
-    let min_dist_sq = valid_candidates
-        .iter()
-        .map(|(_, _, d_sq)| *d_sq)
-        .min_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.0);
-
-    // Filter to candidates within 20% of the closest (or within 64px, whichever is larger)
-    // This creates a "tier" of roughly equivalent targets
-    // Note: comparing squared distances - adjust threshold accordingly
+    let min_dist_sq = candidates[0].1;
     let min_dist = min_dist_sq.sqrt();
     let distance_threshold_sq = ((min_dist * 1.2).max(min_dist + 64.0)).powi(2);
 
-    let top_tier: Vec<_> = valid_candidates
+    let top_tier: Vec<_> = candidates
         .iter()
-        .filter(|(_, _, dist_sq)| *dist_sq <= distance_threshold_sq)
+        .filter(|(_, dist_sq)| *dist_sq <= distance_threshold_sq)
         .collect();
 
     if top_tier.is_empty() {
-        // Fallback to closest
-        return valid_candidates
-            .iter()
-            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
-            .map(|(e, _, _)| *e);
+        return Some(candidates[0].0);
     }
 
-    // Pick from top tier based on entity index (deterministic spread)
     let pick_index = self_index % top_tier.len();
     Some(top_tier[pick_index].0)
 }
@@ -445,29 +509,37 @@ const ALLY_SEPARATION_RADIUS: f32 = 90.0;
 /// Higher values cause units to flow around each other more aggressively.
 const ALLY_SEPARATION_WEIGHT: f32 = 0.7;
 
-/// Computes a NOC-style separation steering force away from nearby allies.
-/// Returns an average of inverse-distance-weighted flee vectors.
-/// This is the standard "separation" behavior from Reynolds / Nature of Code.
-fn compute_ally_separation(entity: Entity, pos: Vec2, allies: &[(Entity, Vec2)]) -> Vec2 {
+/// Computes a NOC-style separation steering force away from nearby allies
+/// using the spatial hash grid for O(1) neighbour lookup instead of O(N) full scan.
+fn compute_ally_separation(entity: Entity, pos: Vec2, grid: &UnitSpatialGrid) -> Vec2 {
     let mut force = Vec2::ZERO;
     let mut count = 0u32;
 
     let radius_sq = ALLY_SEPARATION_RADIUS * ALLY_SEPARATION_RADIUS;
     let min_dist_sq = 0.001 * 0.001;
 
-    for (other_entity, other_pos) in allies {
-        if *other_entity == entity {
-            continue;
-        }
-        let diff = pos - *other_pos;
-        let dist_sq = diff.length_squared();
+    let my_cell = world_to_grid(pos);
 
-        if dist_sq < radius_sq && dist_sq > min_dist_sq {
-            // Only calculate sqrt when we know we're in range
-            let dist = dist_sq.sqrt();
-            // Weight by inverse distance: closer allies push harder
-            force += diff.normalize_or_zero() / dist;
-            count += 1;
+    for (dx, dy) in NEIGHBOR_OFFSETS.iter() {
+        let check_cell = (my_cell.0 + dx, my_cell.1 + dy);
+
+        let Some(neighbors) = grid.cells.get(&check_cell) else {
+            continue;
+        };
+
+        for neighbor in neighbors {
+            if neighbor.entity == entity {
+                continue;
+            }
+            let diff = pos - neighbor.pos;
+            let dist_sq = diff.length_squared();
+
+            if dist_sq < radius_sq && dist_sq > min_dist_sq {
+                // diff / dist_sq == (diff / dist) / dist == normalize / dist
+                // Avoids sqrt() entirely while preserving inverse-distance weighting.
+                force += diff / dist_sq;
+                count += 1;
+            }
         }
     }
 
@@ -483,109 +555,90 @@ fn compute_ally_separation(entity: Entity, pos: Vec2, allies: &[(Entity, Vec2)])
 /// fluid enveloping movement around the frontline.
 fn movement_and_state_system(
     time: Res<Time>,
+    grid: Res<UnitSpatialGrid>,
     mut q_units: Query<(
         Entity,
         &mut Transform,
         &GlobalTransform,
-        &mut UnitState,
+        &mut UnitAction,
         &Target,
-        &UnitStats,
+        &CombatAttributes,
         &UnitCollider,
     )>,
     q_targets: Query<(&GlobalTransform, &UnitCollider)>,
 ) {
-    // Snapshot all ally positions (read-only pass) for separation calculation.
-    // Collected once before the mutable loop to avoid borrow conflicts.
-    let ally_snapshot: Vec<(Entity, Vec2)> = q_units
-        .iter()
-        .filter(|(_, _, _, state, _, _, _)| **state != UnitState::Dead)
-        .map(|(e, _, gt, _, _, _, _)| (e, gt.translation().truncate()))
-        .collect();
+    let delta_secs = time.delta_secs();
+    q_units.par_iter_mut().for_each(
+        |(entity, mut transform, global_transform, mut state, target, stats, collider)| {
+            let Some(target_entity) = target.0 else {
+                // No target - go idle
+                state.set_if_neq(UnitAction::Idle);
+                return;
+            };
 
-    for (entity, mut transform, global_transform, mut state, target, stats, collider) in
-        &mut q_units
-    {
-        // Skip dead units
-        if *state == UnitState::Dead {
-            continue;
-        }
+            let Ok((target_transform, target_collider)) = q_targets.get(target_entity) else {
+                // Target despawned - will get new target next frame
+                return;
+            };
 
-        let Some(target_entity) = target.0 else {
-            // No target - go idle
-            if *state != UnitState::Idle {
-                *state = UnitState::Idle;
+            // Use GlobalTransform for world-space position (units are children of squads)
+            let my_pos = global_transform.translation().truncate();
+            let target_pos = target_transform.translation().truncate();
+
+            // 2D distance only (X and Y) as per project rules
+            let dist_to_target_sq = my_pos.distance_squared(target_pos);
+
+            // Calculate stop threshold:
+            // We stop when we're within attack range, but also account for collision radii
+            // to prevent units from getting stuck just outside attack range.
+            // Add a small buffer (2.0px) to create a "dead zone" between movement and separation.
+            // Without this buffer, movement stops at 64.0 and separation pushes at <64.0,
+            // causing position oscillation (jitter) at the boundary.
+            let combined_radii = collider.radius + target_collider.radius;
+            let stop_buffer = 2.0;
+            let stop_threshold = stats.attack_range.max(combined_radii + stop_buffer);
+
+            // Hysteresis: If already attacking, allow being pushed back slightly without
+            // immediately switching back to Moving. This prevents oscillation between
+            // Movement (pulling in) and Separation (pushing out) systems.
+            let hysteresis_buffer = if *state == UnitAction::Attacking {
+                5.0
+            } else {
+                0.0
+            };
+            let threshold_with_hysteresis = stop_threshold + hysteresis_buffer;
+            let is_in_range =
+                dist_to_target_sq <= (threshold_with_hysteresis * threshold_with_hysteresis);
+
+            if is_in_range {
+                // Close enough to attack
+                state.set_if_neq(UnitAction::Attacking);
+                // Face the target even while attacking
+                face_target(&mut transform, my_pos, target_pos);
+            } else {
+                // Need to move closer
+                state.set_if_neq(UnitAction::Moving);
+
+                // --- NOC Steering: seek + ally separation ---
+                // Desired velocity: full speed straight toward target
+                let seek = (target_pos - my_pos).normalize_or_zero() * stats.speed;
+
+                // Separation force: steer away from nearby allies (spatial grid lookup).
+                let sep = compute_ally_separation(entity, my_pos, &grid) * stats.speed;
+
+                // Blend: seek drives toward enemy, separation steers laterally around allies.
+                // clamp_length_max ensures we never exceed max speed.
+                let desired = seek + sep * ALLY_SEPARATION_WEIGHT;
+                let movement = desired.clamp_length_max(stats.speed) * delta_secs;
+
+                transform.translation.x += movement.x;
+                transform.translation.y += movement.y;
+
+                // Face the target (not movement direction) so units always look at the enemy
+                face_target(&mut transform, my_pos, target_pos);
             }
-            continue;
-        };
-
-        let Ok((target_transform, target_collider)) = q_targets.get(target_entity) else {
-            // Target despawned - will get new target next frame
-            continue;
-        };
-
-        // Use GlobalTransform for world-space position (units are children of squads)
-        let my_pos = global_transform.translation().truncate();
-        let target_pos = target_transform.translation().truncate();
-
-        // 2D distance only (X and Y) as per project rules
-        let dist_to_target_sq = my_pos.distance_squared(target_pos);
-
-        // Calculate stop threshold:
-        // We stop when we're within attack range, but also account for collision radii
-        // to prevent units from getting stuck just outside attack range.
-        // Add a small buffer (2.0px) to create a "dead zone" between movement and separation.
-        // Without this buffer, movement stops at 64.0 and separation pushes at <64.0,
-        // causing position oscillation (jitter) at the boundary.
-        let combined_radii = collider.radius + target_collider.radius;
-        let stop_buffer = 2.0;
-        let stop_threshold = stats.attack_range.max(combined_radii + stop_buffer);
-
-        // Hysteresis: If already attacking, allow being pushed back slightly without
-        // immediately switching back to Moving. This prevents oscillation between
-        // Movement (pulling in) and Separation (pushing out) systems.
-        let hysteresis_buffer = if *state == UnitState::Attacking {
-            5.0
-        } else {
-            0.0
-        };
-        let threshold_with_hysteresis = stop_threshold + hysteresis_buffer;
-        let is_in_range =
-            dist_to_target_sq <= (threshold_with_hysteresis * threshold_with_hysteresis);
-
-        if is_in_range {
-            // Close enough to attack
-            if *state != UnitState::Attacking {
-                *state = UnitState::Attacking;
-            }
-            // Face the target even while attacking
-            face_target(&mut transform, my_pos, target_pos);
-        } else {
-            // Need to move closer
-            if *state != UnitState::Moving {
-                *state = UnitState::Moving;
-            }
-
-            // --- NOC Steering: seek + ally separation ---
-            // Desired velocity: full speed straight toward target
-            let seek = (target_pos - my_pos).normalize_or_zero() * stats.speed;
-
-            // Separation force: steer away from nearby allies.
-            // This bends the seek path so units flow around each other
-            // instead of tunneling into a single column.
-            let sep = compute_ally_separation(entity, my_pos, &ally_snapshot) * stats.speed;
-
-            // Blend: seek drives toward enemy, separation steers laterally around allies.
-            // clamp_length_max ensures we never exceed max speed.
-            let desired = seek + sep * ALLY_SEPARATION_WEIGHT;
-            let movement = desired.clamp_length_max(stats.speed) * time.delta_secs();
-
-            transform.translation.x += movement.x;
-            transform.translation.y += movement.y;
-
-            // Face the target (not movement direction) so units always look at the enemy
-            face_target(&mut transform, my_pos, target_pos);
-        }
-    }
+        },
+    );
 }
 
 fn face_target(transform: &mut Transform, my_pos: Vec2, target_pos: Vec2) {
@@ -603,134 +656,99 @@ fn face_target(transform: &mut Transform, my_pos: Vec2, target_pos: Vec2) {
 }
 
 /// Maximum push distance per frame to prevent explosive jitter.
-const MAX_PUSH_PER_FRAME: f32 = 1.0;
+const MAX_PUSH_PER_FRAME: f32 = 0.35;
 
-/// Soft collision separation system with anti-jitter damping.
-/// Pushes overlapping units apart to prevent stacking.
-/// Uses O(N^2) pairwise comparison - acceptable for small unit counts.
+/// Soft collision separation system using spatial hash grid.
+/// Only checks the 9 neighbouring cells instead of all units → O(N) instead of O(N²).
 fn separation_system(
     time: Res<Time>,
+    grid: Res<UnitSpatialGrid>,
     mut q_units: Query<(
         Entity,
         &mut Transform,
         &GlobalTransform,
         &UnitCollider,
-        &UnitState,
+        &UnitAction,
     )>,
 ) {
-    // Collect all unit data for comparison (position, radius, push_strength, state)
-    let mut units: Vec<(Entity, Vec2, f32, f32, UnitState)> = Vec::new();
-    for (entity, _transform, global_transform, collider, state) in q_units.iter() {
-        // Skip dead units for collision
-        if *state == UnitState::Dead {
-            continue;
-        }
-        // Use GlobalTransform for world-space position (units are children of squads)
-        units.push((
-            entity,
-            global_transform.translation().truncate(),
-            collider.radius,
-            collider.push_strength,
-            *state,
-        ));
+    let delta = time.delta_secs();
+    if delta <= 0.0 {
+        return;
     }
 
-    // Calculate push vectors for each entity
-    let mut push_map: std::collections::HashMap<Entity, Vec2> = std::collections::HashMap::new();
+    q_units.par_iter_mut().for_each(
+        |(entity, mut transform, global_transform, collider, state)| {
+            let my_pos = global_transform.translation().truncate();
+            let my_cell = world_to_grid(my_pos);
+            let mut total_push = Vec2::ZERO;
 
-    for i in 0..units.len() {
-        for j in (i + 1)..units.len() {
-            let (entity_a, pos_a, radius_a, strength_a, state_a) = units[i];
-            let (entity_b, pos_b, radius_b, strength_b, state_b) = units[j];
-
-            let combined_radius = radius_a + radius_b;
-            let diff = pos_a - pos_b;
-            // 2D distance only (X and Y) as per project rules
-            let dist_sq = diff.length_squared();
-            let combined_radius_sq = combined_radius * combined_radius;
             let min_dist_sq = 0.001 * 0.001;
 
-            // Check for overlap
-            if dist_sq < combined_radius_sq && dist_sq > min_dist_sq {
-                // Only calculate sqrt when we know there's overlap
-                let dist = dist_sq.sqrt();
+            // Only check the 9 neighbouring cells
+            for (dx, dy) in NEIGHBOR_OFFSETS.iter() {
+                let check_cell = (my_cell.0 + dx, my_cell.1 + dy);
 
-                // Calculate overlap depth
-                let overlap = combined_radius - dist;
-
-                // Normalize direction (from B to A)
-                let push_dir = diff / dist;
-
-                // State weighting: attacking units are harder to push (more "mass").
-                // This keeps front-line units stable while back-line units slide around.
-                let weight_a = if state_a == UnitState::Attacking {
-                    0.2
-                } else {
-                    1.0
-                };
-                let weight_b = if state_b == UnitState::Attacking {
-                    0.2
-                } else {
-                    1.0
+                let Some(neighbors) = grid.cells.get(&check_cell) else {
+                    continue;
                 };
 
-                // Average push strength of both units
-                let avg_strength = (strength_a + strength_b) * 0.5;
+                for neighbor in neighbors {
+                    if neighbor.entity == entity {
+                        continue;
+                    }
 
-                // Calculate push force
-                let push_force = push_dir * overlap * avg_strength;
+                    let combined_radius = collider.radius + neighbor.radius;
+                    let diff = my_pos - neighbor.pos;
+                    let dist_sq = diff.length_squared();
+                    let combined_radius_sq = combined_radius * combined_radius;
 
-                // Unit A gets pushed in positive direction, B in negative
-                // Apply state weighting to reduce push on attacking units
-                *push_map.entry(entity_a).or_insert(Vec2::ZERO) += push_force * weight_a;
-                *push_map.entry(entity_b).or_insert(Vec2::ZERO) -= push_force * weight_b;
+                    if dist_sq < combined_radius_sq && dist_sq > min_dist_sq {
+                        let dist = dist_sq.sqrt();
+                        let overlap = combined_radius - dist;
+                        let push_dir = diff / dist;
+
+                        // State weighting: attacking units are harder to push
+                        let my_weight = if *state == UnitAction::Attacking {
+                            0.2
+                        } else {
+                            1.0
+                        };
+
+                        let avg_strength = (collider.push_strength + neighbor.push_strength) * 0.5;
+                        total_push += push_dir * overlap * avg_strength * my_weight;
+                    }
+                }
             }
-        }
-    }
 
-    // Apply push vectors to transforms with max force clamping
-    // Respect paused time: if game is paused, don't push units
-    let delta = time.delta_secs();
-    if delta > 0.0 {
-        for (entity, mut transform, _global_transform, _collider, state) in &mut q_units {
-            if *state == UnitState::Dead {
-                continue;
-            }
-
-            if let Some(push) = push_map.get(&entity) {
-                // Clamp push magnitude to prevent explosive movement from accumulated forces.
-                // Even if 100 units push you, you only move MAX_PUSH_PER_FRAME pixels.
-                let push_len_sq = push.length_squared();
+            if total_push != Vec2::ZERO {
+                let push_len_sq = total_push.length_squared();
                 let max_push_sq = MAX_PUSH_PER_FRAME * MAX_PUSH_PER_FRAME;
 
                 let final_push = if push_len_sq > max_push_sq {
-                    push.normalize() * MAX_PUSH_PER_FRAME
+                    total_push.normalize() * MAX_PUSH_PER_FRAME
                 } else {
-                    *push
+                    total_push
                 };
 
                 transform.translation.x += final_push.x;
                 transform.translation.y += final_push.y;
             }
-        }
-    }
+        },
+    );
 }
 
 // ============================================================================
 // Velocity Tracking Systems
 // ============================================================================
 
-/// Deadzone threshold for velocity calculation (in pixels).
-/// Movements smaller than this are considered zero to prevent jittering.
-/// This prevents animation flickering when units are stuck, pushing each other,
-/// or experiencing floating-point rounding errors.
-// const VELOCITY_DEADZONE: f32 = 1.0;
-
 /// Automatically add Velocity and PreviousPosition components to units that don't have them.
 fn init_velocity_tracking(
     q_units: Query<
         (Entity, &GlobalTransform),
-        (Or<(With<PlayerUnit>, With<EnemyUnit>)>, Without<Velocity>),
+        (
+            Or<(With<PlayerFaction>, With<EnemyFaction>)>,
+            Without<Velocity>,
+        ),
     >,
     mut commands: Commands,
 ) {
@@ -746,7 +764,7 @@ fn update_velocity_from_movement(
     time: Res<Time>,
     mut q_units: Query<
         (&GlobalTransform, &mut Velocity, &mut PreviousPosition),
-        Or<(With<PlayerUnit>, With<EnemyUnit>)>,
+        Or<(With<PlayerFaction>, With<EnemyFaction>)>,
     >,
 ) {
     let delta_time = time.delta_secs();

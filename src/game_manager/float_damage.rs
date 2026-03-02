@@ -34,7 +34,7 @@ impl FromWorld for FontAssets {
 
 fn spawn_float_damage(
     mut ev_damage: MessageReader<TakeDamageMessage>,
-    q_transform: Query<(&GlobalTransform, Option<&EnemyUnit>)>,
+    q_transform: Query<(&GlobalTransform, Option<&EnemyFaction>)>,
     mut commands: Commands,
     assets: Res<AssetServer>,
     palette: Res<ColorPalette>,

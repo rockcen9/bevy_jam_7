@@ -108,7 +108,7 @@ pub enum AttackSet {
 /// Sends death messages for units with zero health.
 /// This runs BEFORE other systems process the death (like squad tracking).
 fn death_message_system(
-    q_units: Query<(Entity, &Health, &GlobalTransform, Option<&EnemyUnit>)>,
+    q_units: Query<(Entity, &Health, &GlobalTransform, Option<&EnemyFaction>)>,
     mut ev_death: MessageWriter<UnitDeathMessage>,
 ) {
     for (entity, health, global_transform, enemy_unit) in &q_units {
@@ -133,7 +133,7 @@ fn death_despawn_system(q_units: Query<(Entity, &Health)>, mut commands: Command
 }
 fn been_attack(
     trigger: On<AttackEvent>,
-    q_stats: Query<&UnitStats>,
+    q_stats: Query<&CombatAttributes>,
     q_belong: Query<&BelongToSquad>,
     q_bonus: Query<&BigEyeDamageBonus>,
     mut ev_damage: MessageWriter<TakeDamageMessage>,
@@ -166,7 +166,7 @@ fn been_attack(
 
 fn take_damage_system(
     mut ev_damage: MessageReader<TakeDamageMessage>,
-    mut q_health: Query<(&mut Health, &UnitStats, Option<&mut ActiveBuffs>)>,
+    mut q_health: Query<(&mut Health, &CombatAttributes, Option<&mut ActiveBuffs>)>,
     q_transform: Query<&GlobalTransform>,
     mut commands: Commands,
     mut rng: Single<&mut ChaCha8Rng, With<GlobalRng>>,

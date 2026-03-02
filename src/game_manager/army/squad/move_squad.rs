@@ -42,7 +42,7 @@ fn hide_select_squad(mut q_select_squad: Query<&mut Visibility, With<SelectSquad
 fn on_drag_start(
     drag_start: On<Pointer<DragStart>>,
     q_main_mesh: Query<&BelongTo, With<MainMesh>>,
-    q_unit_belong_to: Query<&BelongToSquad, (Without<MainMesh>, With<PlayerUnit>)>,
+    q_unit_belong_to: Query<&BelongToSquad, (Without<MainMesh>, With<PlayerFaction>)>,
     q_squad_transform: Query<&Transform>,
     mut commands: Commands,
 ) {

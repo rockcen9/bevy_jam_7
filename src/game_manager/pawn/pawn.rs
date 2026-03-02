@@ -5,7 +5,7 @@ use crate::prelude::*;
 #[derive(Component, Default)]
 #[require(
     SpriteLayer::Pawn,
-    UnitState::Idle,
+    UnitAction::Idle,
     UnitCollider,
     Target,
     AttackTimer::new(1.),

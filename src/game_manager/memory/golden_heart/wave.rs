@@ -118,8 +118,8 @@ fn wave_damage(
     time: Res<Time>,
     mut q_waves: Query<(Entity, &mut WaveDistortionVfx)>,
     q_units: Query<(Entity, &GlobalTransform), With<Unit>>,
-    q_enemy: Query<(), With<EnemyUnit>>,
-    q_player: Query<(), With<PlayerUnit>>,
+    q_enemy: Query<(), With<EnemyFaction>>,
+    q_player: Query<(), With<PlayerFaction>>,
 ) {
     let elapsed = time.elapsed_secs();
 

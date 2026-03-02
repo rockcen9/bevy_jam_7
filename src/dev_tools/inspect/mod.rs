@@ -1,8 +1,9 @@
-use crate::{dev_tools::inspect::sys_filter::debug_component, prelude::*};
-
+// use crate::{dev_tools::inspect::sys_filter::debug_component, prelude::*};
+use crate::prelude::*;
 mod resource_sys;
 pub use resource_sys::*;
 mod sys_filter;
+pub use sys_filter::*;
 pub fn filter_component_plugin(app: &mut App) {
     // app.add_plugins(EguiPlugin::default());
 

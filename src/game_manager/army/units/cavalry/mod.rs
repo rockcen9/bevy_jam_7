@@ -6,7 +6,7 @@ use crate::prelude::*;
     SpriteActor,
     Pawn,
     Melee,
-    UnitStats::melee(UnitKind::Cavalry),
+    CombatAttributes::melee(UnitKind::Cavalry),
     Health::new_full(80.),
     ActiveBuffs { list: vec![BuffEffect::Stun(StunBuffData::default())] }
 )]

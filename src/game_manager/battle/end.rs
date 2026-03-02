@@ -91,8 +91,8 @@ fn click_to_title_from_leaderboard(
 }
 
 fn check_battle_result(
-    q_player_units: Query<(), With<PlayerUnit>>,
-    q_enemy_units: Query<(), With<EnemyUnit>>,
+    q_player_units: Query<(), With<PlayerFaction>>,
+    q_enemy_units: Query<(), With<EnemyFaction>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut campaign: ResMut<GameProgress>,
     _commands: Commands,
