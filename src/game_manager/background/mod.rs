@@ -17,6 +17,10 @@ pub(crate) fn plugin(app: &mut App) {
         increase_battle_speed.run_if(in_state(GameState::Battle)),
     );
     app.add_systems(OnExit(GameState::Battle), on_exit_battle);
+    app.add_systems(
+        Update,
+        toggle_background_visibility.run_if(in_state(GameState::Battle)),
+    );
 }
 
 fn spawn_background(
@@ -90,6 +94,22 @@ fn increase_battle_speed(
     // Only suppress the visual output when paused; speed buttons have no effect.
     mat.speed = if paused { 0.0 } else { 0.10 };
     mat.iters = bg.logical_iters;
+}
+
+fn toggle_background_visibility(
+    kbd: Res<ButtonInput<KeyCode>>,
+    mut bg_q: Query<&mut Visibility, With<BackgroundQuad>>,
+) {
+    if !kbd.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    let Ok(mut vis) = bg_q.single_mut() else {
+        return;
+    };
+    *vis = match *vis {
+        Visibility::Hidden => Visibility::Inherited,
+        _ => Visibility::Hidden,
+    };
 }
 
 fn on_exit_battle(

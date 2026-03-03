@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-const UNIT_SIZE: f32 = 64.0;
+const UNIT_SIZE: f32 = 100.0;
 const UNIT_SPACING: f32 = 10.0;
 const GRID_WIDTH: usize = 10;
 

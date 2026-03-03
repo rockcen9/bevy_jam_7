@@ -2,7 +2,7 @@ use crate::prelude::*;
 pub(crate) fn plugin(_app: &mut bevy::app::App) {}
 
 #[derive(Component, Default, Reflect)]
-#[require(RequireShadowSprite)]
+#[require(RequireShadowSprite, DespawnOnExit::<GameState>(GameState::Battle))]
 pub struct Unit;
 
 #[derive(Component, Default, Reflect)]

@@ -1,4 +1,4 @@
-const UNIT_SIZE_1080: f32 = 128.0;
+const UNIT_SIZE_1080: f32 = 100.0;
 use bevy::platform::collections::HashMap;
 
 use crate::prelude::*;
@@ -9,6 +9,36 @@ use crate::prelude::*;
 pub(crate) fn plugin(app: &mut bevy::app::App) {
     // Init spatial grid resource
     app.init_resource::<UnitSpatialGrid>();
+    app.init_resource::<ShowSpatialGrid>();
+    app.init_resource::<UnitInspector>();
+    app.init_resource::<NeighborCellScan>();
+    app.init_gizmo_group::<ScanGizmos>();
+    app.add_systems(Startup, configure_scan_gizmos);
+
+    app.add_systems(
+        Update,
+        (toggle_spatial_grid_debug, draw_spatial_grid_gizmos)
+            .chain()
+            .run_if(in_state(GameState::Battle)),
+    );
+
+    app.add_systems(
+        Update,
+        (cycle_unit_inspector, draw_unit_inspector_gizmos)
+            .chain()
+            .run_if(in_state(GameState::Battle)),
+    );
+
+    app.add_systems(
+        Update,
+        (
+            trigger_neighbor_cell_scan,
+            advance_neighbor_cell_scan,
+            draw_neighbor_cell_scan,
+        )
+            .chain()
+            .run_if(in_state(GameState::Battle)),
+    );
 
     app.add_systems(
         Update,
@@ -656,7 +686,7 @@ fn face_target(transform: &mut Transform, my_pos: Vec2, target_pos: Vec2) {
 }
 
 /// Maximum push distance per frame to prevent explosive jitter.
-const MAX_PUSH_PER_FRAME: f32 = 0.35;
+const MAX_PUSH_PER_FRAME: f32 = 2.;
 
 /// Soft collision separation system using spatial hash grid.
 /// Only checks the 9 neighbouring cells instead of all units → O(N) instead of O(N²).
@@ -709,7 +739,7 @@ fn separation_system(
 
                         // State weighting: attacking units are harder to push
                         let my_weight = if *state == UnitAction::Attacking {
-                            0.2
+                            0.6
                         } else {
                             1.0
                         };
@@ -786,4 +816,316 @@ fn update_velocity_from_movement(
 
         prev_pos.0 = current_pos;
     }
+}
+
+// ============================================================================
+// Spatial Grid Debug Gizmos
+// ============================================================================
+
+/// Toggles spatial grid gizmo rendering on/off.
+#[derive(Resource, Default)]
+pub struct ShowSpatialGrid(pub bool);
+
+fn toggle_spatial_grid_debug(kbd: Res<ButtonInput<KeyCode>>, mut show: ResMut<ShowSpatialGrid>) {
+    if kbd.just_pressed(KeyCode::KeyG) {
+        show.0 = !show.0;
+    }
+}
+
+fn draw_spatial_grid_gizmos(
+    show: Res<ShowSpatialGrid>,
+    mut gizmos: Gizmos,
+    q_camera: Query<(&GlobalTransform, &Projection), With<MainCamera>>,
+    q_window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+) {
+    if !show.0 {
+        return;
+    }
+
+    let Ok((cam_transform, projection)) = q_camera.single() else {
+        return;
+    };
+    let Ok(window) = q_window.single() else {
+        return;
+    };
+
+    let ortho_scale = match projection {
+        Projection::Orthographic(o) => o.scale,
+        _ => 1.0,
+    };
+
+    let cam_pos = cam_transform.translation().truncate();
+    let half_w = window.width() / 2.0 * ortho_scale;
+    let half_h = window.height() / 2.0 * ortho_scale;
+    let world_min = cam_pos - Vec2::new(half_w, half_h);
+    let world_max = cam_pos + Vec2::new(half_w, half_h);
+
+    let col_start = (world_min.x / GRID_CELL_SIZE).floor() as i32;
+    let col_end = (world_max.x / GRID_CELL_SIZE).ceil() as i32;
+    let row_start = (world_min.y / GRID_CELL_SIZE).floor() as i32;
+    let row_end = (world_max.y / GRID_CELL_SIZE).ceil() as i32;
+
+    let v_color = Color::srgba(1.0, 1.0, 1.0, 0.75);
+    let h_color = Color::srgba(1.0, 1.0, 1.0, 0.75);
+
+    // Vertical lines (constant X, span full visible height)
+    for cx in col_start..=col_end {
+        let x = cx as f32 * GRID_CELL_SIZE;
+        gizmos.line_2d(
+            Vec2::new(x, world_min.y),
+            Vec2::new(x, world_max.y),
+            v_color,
+        );
+    }
+
+    // Horizontal lines (constant Y, span full visible width)
+    for cy in row_start..=row_end {
+        let y = cy as f32 * GRID_CELL_SIZE;
+        gizmos.line_2d(
+            Vec2::new(world_min.x, y),
+            Vec2::new(world_max.x, y),
+            h_color,
+        );
+    }
+}
+
+// ============================================================================
+// Unit Inspector (Space to cycle, spatial-grid neighbour lines)
+// ============================================================================
+
+/// Tracks which unit is currently being inspected.
+#[derive(Resource, Default)]
+pub struct UnitInspector {
+    /// Whether the inspector is active.
+    pub active: bool,
+    /// Stable index into the sorted unit list.
+    pub index: usize,
+}
+
+fn cycle_unit_inspector(
+    kbd: Res<ButtonInput<KeyCode>>,
+    mut inspector: ResMut<UnitInspector>,
+    q_units: Query<Entity, With<Unit>>,
+) {
+    if !kbd.just_pressed(KeyCode::Space) {
+        return;
+    }
+
+    let count = q_units.iter().count();
+    if count == 0 {
+        return;
+    }
+
+    if !inspector.active {
+        inspector.active = true;
+        inspector.index = 0;
+    } else {
+        inspector.index = (inspector.index + 1) % count;
+    }
+}
+
+fn draw_unit_inspector_gizmos(
+    inspector: Res<UnitInspector>,
+    grid: Res<UnitSpatialGrid>,
+    mut gizmos: Gizmos,
+    q_units: Query<(Entity, &GlobalTransform, &Faction), With<Unit>>,
+) {
+    if !inspector.active {
+        return;
+    }
+
+    // Collect and sort by entity id for a stable cycle order
+    let mut units: Vec<_> = q_units.iter().collect();
+    if units.is_empty() {
+        return;
+    }
+    units.sort_by_key(|(e, _, _)| e.index_u32());
+
+    let idx = inspector.index % units.len();
+    let (selected_entity, selected_transform, selected_faction) = units[idx];
+    let my_pos = selected_transform.translation().truncate();
+
+    // Bright yellow ring around the selected unit
+    gizmos.circle_2d(my_pos, 56.0, Color::srgba(1.0, 0.95, 0.0, 1.0));
+    gizmos.circle_2d(my_pos, 60.0, Color::srgba(1.0, 0.95, 0.0, 0.4));
+
+    // Look up all units in the 9 neighbouring cells and draw connection lines
+    let my_cell = world_to_grid(my_pos);
+    for (dx, dy) in NEIGHBOR_OFFSETS.iter() {
+        let check_cell = (my_cell.0 + dx, my_cell.1 + dy);
+        let Some(neighbors) = grid.cells.get(&check_cell) else {
+            continue;
+        };
+
+        for neighbor in neighbors {
+            if neighbor.entity == selected_entity {
+                continue;
+            }
+
+            // Blue for allies, red for enemies
+            let (line_color, dot_color) = if neighbor.faction == *selected_faction {
+                (
+                    Color::srgba(0.2, 0.7, 1.0, 0.85),
+                    Color::srgba(0.2, 0.7, 1.0, 1.0),
+                )
+            } else {
+                (
+                    Color::srgba(1.0, 0.25, 0.15, 0.85),
+                    Color::srgba(1.0, 0.25, 0.15, 1.0),
+                )
+            };
+
+            gizmos.line_2d(my_pos, neighbor.pos, line_color);
+            gizmos.circle_2d(neighbor.pos, 18.0, dot_color);
+        }
+    }
+}
+
+// ============================================================================
+// Neighbour Cell Scan Animation (G key)
+// ============================================================================
+
+/// Custom gizmo group so we can set a thick line_width independent of the default gizmos.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct ScanGizmos;
+
+fn configure_scan_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<ScanGizmos>();
+    config.line.width = 6.0;
+}
+
+/// How long each of the 9 cells stays highlighted before moving to the next.
+const SCAN_CELL_DURATION: f32 = 0.5;
+
+/// Animates highlighting the 9 surrounding grid cells one by one.
+/// Triggered by pressing G when the unit inspector is active.
+#[derive(Resource, Default)]
+pub struct NeighborCellScan {
+    /// Whether the animation is currently playing.
+    pub active: bool,
+    /// World-space centre of the unit whose neighbourhood is being scanned.
+    center_pos: Vec2,
+    /// Index into NEIGHBOR_OFFSETS for the cell currently being highlighted (0..9).
+    cell_index: usize,
+    /// Elapsed time spent on the current cell.
+    elapsed: f32,
+}
+
+/// Watches for G press and (re-)starts the scan on the selected unit.
+fn trigger_neighbor_cell_scan(
+    kbd: Res<ButtonInput<KeyCode>>,
+    inspector: Res<UnitInspector>,
+    mut scan: ResMut<NeighborCellScan>,
+    q_units: Query<(Entity, &GlobalTransform), With<Unit>>,
+) {
+    if !kbd.just_pressed(KeyCode::KeyG) {
+        return;
+    }
+    if !inspector.active {
+        return;
+    }
+
+    let mut units: Vec<_> = q_units.iter().collect();
+    if units.is_empty() {
+        return;
+    }
+    units.sort_by_key(|(e, _)| e.index_u32());
+
+    let idx = inspector.index % units.len();
+    let (_, transform) = units[idx];
+
+    if scan.active {
+        scan.active = false;
+        return;
+    }
+
+    scan.active = true;
+    scan.center_pos = transform.translation().truncate();
+    scan.cell_index = 0;
+    scan.elapsed = 0.0;
+}
+
+/// Advances the scan timer and moves to the next cell.
+/// Also tracks the inspected unit's live position so the grid follows it.
+fn advance_neighbor_cell_scan(
+    time: Res<Time<Real>>,
+    mut scan: ResMut<NeighborCellScan>,
+    inspector: Res<UnitInspector>,
+    q_units: Query<(Entity, &GlobalTransform), With<Unit>>,
+) {
+    if !scan.active {
+        return;
+    }
+
+    // Keep center_pos in sync with the currently inspected unit
+    let mut units: Vec<_> = q_units.iter().collect();
+    units.sort_by_key(|(e, _)| e.index_u32());
+    if !units.is_empty() {
+        let idx = inspector.index % units.len();
+        scan.center_pos = units[idx].1.translation().truncate();
+    }
+
+    scan.elapsed += time.delta_secs();
+    if scan.elapsed >= SCAN_CELL_DURATION {
+        scan.elapsed -= SCAN_CELL_DURATION;
+        scan.cell_index += 1;
+        if scan.cell_index >= NEIGHBOR_OFFSETS.len() {
+            scan.cell_index = 0;
+        }
+    }
+}
+
+/// Draws the currently-highlighted cell as a filled rect outline with a bright pulse.
+fn draw_neighbor_cell_scan(scan: Res<NeighborCellScan>, mut gizmos: Gizmos<ScanGizmos>) {
+    if !scan.active {
+        return;
+    }
+
+    let (dx, dy) = NEIGHBOR_OFFSETS[scan.cell_index];
+    let my_cell = world_to_grid(scan.center_pos);
+    let cell = (my_cell.0 + dx, my_cell.1 + dy);
+
+    let cell_world = Vec2::new(
+        cell.0 as f32 * GRID_CELL_SIZE,
+        cell.1 as f32 * GRID_CELL_SIZE,
+    );
+    let center = cell_world + Vec2::splat(GRID_CELL_SIZE * 0.5);
+    let half = Vec2::splat(GRID_CELL_SIZE * 0.5);
+
+    // Pulse alpha based on how far through the cell duration we are
+    let t = scan.elapsed / SCAN_CELL_DURATION;
+    let alpha = 1.0 - t * 0.4; // fades slightly as we leave each cell
+
+    // Current cell: bright cyan fill outline
+    let color = if (dx, dy) == (0, 0) {
+        // Center cell: gold
+        Color::srgba(1.0, 0.85, 0.1, alpha)
+    } else {
+        // Neighbour cells: cyan
+        // let color = Color::srgba(0.1, 0.9, 1.0, alpha);
+        let color = Color::srgb(0.53, 0.04, 0.04);
+        color
+    };
+    // Draw rect via 4 line segments
+    let tl = center + Vec2::new(-half.x, half.y);
+    let tr = center + Vec2::new(half.x, half.y);
+    let br = center + Vec2::new(half.x, -half.y);
+    let bl = center + Vec2::new(-half.x, -half.y);
+    gizmos.line_2d(tl, tr, color);
+    gizmos.line_2d(tr, br, color);
+    gizmos.line_2d(br, bl, color);
+    gizmos.line_2d(bl, tl, color);
+
+    // Cross-hair in the centre of the highlighted cell
+    let cross = GRID_CELL_SIZE * 0.15;
+    gizmos.line_2d(
+        center - Vec2::new(cross, 0.0),
+        center + Vec2::new(cross, 0.0),
+        color,
+    );
+    gizmos.line_2d(
+        center - Vec2::new(0.0, cross),
+        center + Vec2::new(0.0, cross),
+        color,
+    );
 }
